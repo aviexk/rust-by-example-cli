@@ -25,16 +25,24 @@ struct Tutorial {
     current_chapter: usize,
     current_exercise: usize,
     temp_file: String,
+    current_code: String,
 }
 
 impl Tutorial {
     fn new() -> Self {
         let chapters = Self::create_chapters();
+        let current_code = if !chapters.is_empty() && !chapters[0].exercises.is_empty() {
+            chapters[0].exercises[0].initial_code.clone()
+        } else {
+            String::new()
+        };
+        
         Self {
             chapters,
             current_chapter: 0,
             current_exercise: 0,
             temp_file: "rusttutor_temp.rs".to_string(),
+            current_code,
         }
     }
 
@@ -455,11 +463,14 @@ fn add(a: i32, b: i32) -> i32 {
         println!("Based on Rust by Example (https://doc.rust-lang.org/rust-by-example/)");
         println!("Inspired by vimtutor\n");
         
-        self.print_help();
+        println!("This is an interactive tutorial. You'll be guided through each exercise step by step.");
+        println!("Press Enter to start your first exercise, or type 'help' for commands.\n");
         
         loop {
-            self.display_current_exercise();
+            // Interactive exercise flow
+            self.interactive_exercise_flow();
             
+            // Command mode
             print!("\nrusttutor> ");
             io::stdout().flush().unwrap();
             
@@ -481,6 +492,7 @@ fn add(a: i32, b: i32) -> i32 {
                 "p" | "prev" => self.prev_exercise(),
                 "edit" => self.edit_exercise(),
                 "reset" => self.reset_exercise(),
+                "restart" => self.restart_exercise(),
                 cmd if cmd.starts_with("goto ") => {
                     let parts: Vec<&str> = cmd.split_whitespace().collect();
                     if parts.len() == 3 {
@@ -493,24 +505,27 @@ fn add(a: i32, b: i32) -> i32 {
                         println!("Usage: goto <chapter> <exercise>");
                     }
                 }
+                "" => continue, // Just pressed enter, restart the interactive flow
                 _ => println!("Unknown command. Type 'h' for help."),
             }
         }
     }
 
     fn print_help(&self) {
-        println!("Commands:");
-        println!("  h, help    - Show this help");
-        println!("  l, list    - List all chapters and exercises");
-        println!("  r, run     - Run the current exercise");
-        println!("  s, solution - Show the solution");
-        println!("  hint       - Show a hint");
-        println!("  n, next    - Go to next exercise");
-        println!("  p, prev    - Go to previous exercise");
-        println!("  edit       - Edit the current exercise code");
-        println!("  reset      - Reset exercise to initial state");
+        println!("\n📖 RustTutor Commands:");
+        println!("  h, help      - Show this help");
+        println!("  l, list      - List all chapters and exercises");
+        println!("  r, run       - Run the current exercise");
+        println!("  s, solution  - Show the solution");
+        println!("  hint         - Show a hint");
+        println!("  n, next      - Go to next exercise");
+        println!("  p, prev      - Go to previous exercise");
+        println!("  edit         - Edit the current exercise code in nvim");
+        println!("  reset        - Reset exercise to initial state");
+        println!("  restart      - Restart the interactive flow for current exercise");
         println!("  goto <c> <e> - Go to chapter c, exercise e");
-        println!("  q, quit    - Exit rusttutor");
+        println!("  q, quit      - Exit rusttutor");
+        println!("\n💡 Tip: Just press Enter to go through the interactive exercise flow!");
     }
 
     fn list_chapters(&self) {
@@ -525,12 +540,47 @@ fn add(a: i32, b: i32) -> i32 {
         }
     }
 
-    fn display_current_exercise(&self) {
+    fn interactive_exercise_flow(&mut self) {
+        // Step 1: Display chapter and exercise title
+        self.display_chapter_and_exercise();
+        self.wait_for_enter("Press Enter to see the description and instructions...");
+        
+        // Step 2: Show description and instructions
+        self.display_description_and_instructions();
+        self.wait_for_enter("Press Enter to open the code in nvim...");
+        
+        // Step 3: Open code in nvim
+        self.edit_exercise();
+        
+        // Step 4: Ask what to do next
+        self.post_edit_options();
+    }
+    
+    fn display_chapter_and_exercise(&self) {
+        println!("\x1b[2J\x1b[H"); // Clear screen
         let chapter = &self.chapters[self.current_chapter];
         let exercise = &chapter.exercises[self.current_exercise];
         
-        println!("\n{}", "=".repeat(80));
+        println!("{}", "=".repeat(80));
         println!("📖 Chapter {}: {}", self.current_chapter + 1, chapter.title);
+        println!("📝 Exercise {}.{}: {}", self.current_chapter + 1, self.current_exercise + 1, exercise.title);
+        println!("{}", "=".repeat(80));
+        
+        // Show progress
+        let total_exercises: usize = self.chapters.iter().map(|c| c.exercises.len()).sum();
+        let current_exercise_num = self.chapters[..self.current_chapter].iter().map(|c| c.exercises.len()).sum::<usize>() + self.current_exercise + 1;
+        println!("\n📊 Progress: Exercise {} of {}", current_exercise_num, total_exercises);
+        
+        // Show chapter description
+        println!("\n📚 Chapter Overview: {}", chapter.description);
+    }
+    
+    fn display_description_and_instructions(&self) {
+        println!("\x1b[2J\x1b[H"); // Clear screen
+        let chapter = &self.chapters[self.current_chapter];
+        let exercise = &chapter.exercises[self.current_exercise];
+        
+        println!("{}", "=".repeat(80));
         println!("📝 Exercise {}.{}: {}", self.current_chapter + 1, self.current_exercise + 1, exercise.title);
         println!("{}", "=".repeat(80));
         
@@ -539,28 +589,50 @@ fn add(a: i32, b: i32) -> i32 {
         
         if !exercise.instructions.is_empty() {
             println!("\n📋 Instructions:");
-            for instruction in &exercise.instructions {
-                println!("  {}", instruction);
+            for (i, instruction) in exercise.instructions.iter().enumerate() {
+                println!("  {}. {}", i + 1, instruction.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' '));
             }
         }
         
-        println!("\n💻 Current Code:");
-        println!("{}", "─".repeat(50));
-        println!("{}", exercise.initial_code);
-        println!("{}", "─".repeat(50));
+        if let Some(expected) = &exercise.expected_output {
+            println!("\n🎯 Expected Output:");
+            println!("{}", "─".repeat(30));
+            println!("{}", expected);
+            println!("{}", "─".repeat(30));
+        }
+        
+        if exercise.hint.is_some() {
+            println!("\n💭 Hint available - type 'hint' after editing to see it");
+        }
+    }
+    
+    fn wait_for_enter(&self, message: &str) {
+        println!("\n{}", message);
+        print!("👉 ");
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+    }
+    
+    fn post_edit_options(&self) {
+        println!("\n🔧 What would you like to do next?");
+        println!("  r, run     - Run your code");
+        println!("  hint       - Get a hint");
+        println!("  s, solution - Show the solution");
+        println!("  edit       - Edit the code again");
+        println!("  n, next    - Move to next exercise");
+        println!("  help       - Show all commands");
+        println!("Or just press Enter to run your code!");
     }
 
     fn run_current_exercise(&self) {
-        let chapter = &self.chapters[self.current_chapter];
-        let exercise = &chapter.exercises[self.current_exercise];
-        
-        // Write code to temporary file
-        if let Err(e) = fs::write(&self.temp_file, &exercise.initial_code) {
+        // Write current code to temporary file
+        if let Err(e) = fs::write(&self.temp_file, &self.current_code) {
             println!("❌ Error writing to temporary file: {}", e);
             return;
         }
         
-        println!("\n🔧 Compiling and running...");
+        println!("\n🔧 Compiling and running your code...");
         
         // Compile the code
         let compile_output = Command::new("rustc")
@@ -579,19 +651,30 @@ fn add(a: i32, b: i32) -> i32 {
                     
                     match run_output {
                         Ok(run_result) => {
-                            println!("\n📤 Output:");
-                            println!("{}", String::from_utf8_lossy(&run_result.stdout));
+                            println!("\n📤 Your Output:");
+                            println!("{}", "─".repeat(40));
+                            let output_str = String::from_utf8_lossy(&run_result.stdout);
+                            println!("{}", output_str);
+                            println!("{}", "─".repeat(40));
+                            
+                            // Check against expected output
+                            let chapter = &self.chapters[self.current_chapter];
+                            let exercise = &chapter.exercises[self.current_exercise];
                             
                             if let Some(expected) = &exercise.expected_output {
-                                let actual = String::from_utf8_lossy(&run_result.stdout).trim().to_string();
+                                let actual = output_str.trim().to_string();
                                 if actual == *expected {
-                                    println!("🎉 Correct! Great job!");
+                                    println!("🎉 Perfect! Your output matches exactly!");
+                                    println!("💡 You can now move to the next exercise with 'n' or 'next'");
                                 } else {
-                                    println!("🤔 Expected output:");
+                                    println!("🤔 Expected Output:");
+                                    println!("{}", "─".repeat(40));
                                     println!("{}", expected);
-                                    println!("\nYour output:");
-                                    println!("{}", actual);
+                                    println!("{}", "─".repeat(40));
+                                    println!("💭 Try again! Use 'edit' to modify your code or 'hint' for help.");
                                 }
+                            } else {
+                                println!("✨ Code executed successfully!");
                             }
                         }
                         Err(e) => println!("❌ Error running program: {}", e),
@@ -599,13 +682,13 @@ fn add(a: i32, b: i32) -> i32 {
                 } else {
                     println!("❌ Compilation failed:");
                     println!("{}", String::from_utf8_lossy(&output.stderr));
+                    println!("💭 Use 'edit' to fix the issues or 'hint' for help.");
                 }
             }
             Err(e) => println!("❌ Error compiling: {}", e),
         }
         
         // Cleanup
-        let _ = fs::remove_file(&self.temp_file);
         let _ = fs::remove_file("rusttutor_temp");
     }
 
@@ -642,7 +725,15 @@ fn add(a: i32, b: i32) -> i32 {
             self.current_exercise = 0;
         } else {
             println!("🎓 Congratulations! You've completed all exercises!");
+            return;
         }
+        
+        // Reset code to the new exercise's initial code
+        let chapter = &self.chapters[self.current_chapter];
+        let exercise = &chapter.exercises[self.current_exercise];
+        self.current_code = exercise.initial_code.clone();
+        
+        println!("📖 Moved to next exercise!");
     }
 
     fn prev_exercise(&mut self) {
@@ -653,7 +744,15 @@ fn add(a: i32, b: i32) -> i32 {
             self.current_exercise = self.chapters[self.current_chapter].exercises.len() - 1;
         } else {
             println!("📚 You're at the first exercise!");
+            return;
         }
+        
+        // Reset code to the new exercise's initial code
+        let chapter = &self.chapters[self.current_chapter];
+        let exercise = &chapter.exercises[self.current_exercise];
+        self.current_code = exercise.initial_code.clone();
+        
+        println!("📖 Moved to previous exercise!");
     }
 
     fn goto_exercise(&mut self, chapter: usize, exercise: usize) {
@@ -670,18 +769,72 @@ fn add(a: i32, b: i32) -> i32 {
         
         self.current_chapter = chapter_idx;
         self.current_exercise = exercise - 1;
-        println!("📍 Jumped to Chapter {}, Exercise {}", chapter, exercise);
+        
+        // Reset code to the new exercise's initial code
+        let chapter = &self.chapters[self.current_chapter];
+        let exercise = &chapter.exercises[self.current_exercise];
+        self.current_code = exercise.initial_code.clone();
+        
+        println!("📍 Jumped to Chapter {:?}, Exercise {:?}", chapter, exercise);
     }
 
     fn edit_exercise(&mut self) {
-        println!("📝 Edit mode not implemented in this demo.");
-        println!("In a full implementation, this would open your default editor.");
-        println!("For now, you can modify the code in the source and recompile.");
+        // Write current code to temporary file
+        if let Err(e) = fs::write(&self.temp_file, &self.current_code) {
+            println!("❌ Error writing to temporary file: {}", e);
+            return;
+        }
+        
+        println!("🔧 Opening nvim... Save and quit (:wq) when you're done editing.");
+        println!("💡 The file will be automatically loaded with your code.");
+        
+        // Open nvim with the temporary file
+        let nvim_result = Command::new("nvim")
+            .arg(&self.temp_file)
+            .status();
+        
+        match nvim_result {
+            Ok(status) => {
+                if status.success() {
+                    // Read the modified code back
+                    match fs::read_to_string(&self.temp_file) {
+                        Ok(modified_code) => {
+                            self.current_code = modified_code;
+                            println!("✅ Code updated successfully!");
+                            
+                            // Show a preview of the changes
+                            println!("\n📝 Your Current Code:");
+                            println!("{}", "─".repeat(50));
+                            println!("{}", self.current_code);
+                            println!("{}", "─".repeat(50));
+                        }
+                        Err(e) => println!("❌ Error reading modified file: {}", e),
+                    }
+                } else {
+                    println!("❌ nvim was closed without saving properly.");
+                }
+            }
+            Err(e) => {
+                println!("❌ Error opening nvim: {}", e);
+                println!("💡 Make sure nvim is installed and in your PATH.");
+                println!("    You can install it with: brew install neovim (macOS) or your package manager");
+            }
+        }
+        
+        // Clean up temp file
+        let _ = fs::remove_file(&self.temp_file);
     }
 
     fn reset_exercise(&mut self) {
+        let chapter = &self.chapters[self.current_chapter];
+        let exercise = &chapter.exercises[self.current_exercise];
+        self.current_code = exercise.initial_code.clone();
         println!("🔄 Exercise reset to initial state.");
-        println!("(In this demo, the code is always shown in its initial state)");
+    }
+    
+    fn restart_exercise(&mut self) {
+        self.reset_exercise();
+        println!("🔄 Restarting interactive flow for current exercise...");
     }
 }
 
